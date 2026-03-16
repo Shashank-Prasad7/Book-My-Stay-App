@@ -1,115 +1,79 @@
 import java.util.*;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicInteger;
 
-// Reservation - represents guest booking intent
-class Reservation {
-    private String guestName;
-    private String roomType;
-    private int nights;
+/**
+ * Data class for requests.
+ * Name and Constructor must match.
+ */
+class BookingRequest {
+    private final String guestName;
+    private final String roomType;
 
-    public Reservation(String guestName, String roomType, int nights) {
+    public BookingRequest(String guestName, String roomType) {
         this.guestName = guestName;
         this.roomType = roomType;
-        this.nights = nights;
     }
 
-    public String getGuestName() {
-        return guestName;
-    }
-
-    public String getRoomType() {
-        return roomType;
-    }
-
-    public int getNights() {
-        return nights;
-    }
-
-    public void displayRequest() {
-        System.out.println("Guest: " + guestName +
-                " | Room Type: " + roomType +
-                " | Nights: " + nights);
-    }
+    public String getGuestName() { return guestName; }
+    public String getRoomType() { return roomType; }
 }
 
-// Booking Request Queue
-class BookingRequestQueue {
-
-    // Queue maintains FIFO order
-    private Queue<Reservation> requestQueue = new LinkedList<>();
-
-    // Accept booking request
-    public void addRequest(Reservation reservation) {
-        requestQueue.offer(reservation);
-        System.out.println("Booking request added for " + reservation.getGuestName());
-    }
-
-    // View next request (without removing)
-    public Reservation peekNextRequest() {
-        return requestQueue.peek();
-    }
-
-    // Retrieve next request for processing
-    public Reservation getNextRequest() {
-        return requestQueue.poll();
-    }
-
-    // Display all queued requests
-    public void displayQueue() {
-        if (requestQueue.isEmpty()) {
-            System.out.println("No booking requests in queue.");
-            return;
-        }
-
-        System.out.println("\nBooking Requests in Arrival Order:");
-        for (Reservation r : requestQueue) {
-            r.displayRequest();
-        }
-    }
-}
-
-// Guest actor
-class Guest {
-    private String name;
-
-    public Guest(String name) {
-        this.name = name;
-    }
-
-    public void submitBooking(String roomType, int nights, BookingRequestQueue queue) {
-        Reservation reservation = new Reservation(name, roomType, nights);
-        queue.addRequest(reservation);
-    }
-}
-
-// Main Program
+/**
+ * Main Class - Must match file name: BookMyStayApp.java
+ */
 public class BookMyStayApp {
 
-    public static void main(String[] args) {
+    private final Map<String, AtomicInteger> inventoryService = new ConcurrentHashMap<>();
+    private final Map<String, Set<String>> allocatedRooms = new ConcurrentHashMap<>();
+    private final Queue<BookingRequest> requestQueue = new LinkedList<>();
 
-        // Booking request queue
-        BookingRequestQueue queue = new BookingRequestQueue();
+    // Constructor name now matches the Class name
+    public BookMyStayApp() {
+        inventoryService.put("DELUXE", new AtomicInteger(10));
+        inventoryService.put("SUITE", new AtomicInteger(5));
+        allocatedRooms.put("DELUXE", ConcurrentHashMap.newKeySet());
+        allocatedRooms.put("SUITE", ConcurrentHashMap.newKeySet());
+    }
 
-        // Guests
-        Guest guest1 = new Guest("Alice");
-        Guest guest2 = new Guest("Bob");
-        Guest guest3 = new Guest("Charlie");
+    public synchronized String processBooking() {
+        BookingRequest request = requestQueue.poll();
+        if (request == null) return "Queue empty.";
 
-        // Guests submit booking requests
-        guest1.submitBooking("Standard", 2, queue);
-        guest2.submitBooking("Deluxe", 3, queue);
-        guest3.submitBooking("Suite", 1, queue);
+        String roomType = request.getRoomType();
+        AtomicInteger availableCount = inventoryService.get(roomType);
 
-        // Display queue (FIFO order preserved)
-        queue.displayQueue();
+        if (availableCount != null && availableCount.get() > 0) {
+            String roomId = roomType + "-" + (100 + (int)(Math.random() * 900));
+            Set<String> assignedSet = allocatedRooms.get(roomType);
 
-        // Show next request to be processed
-        System.out.println("\nNext request to process:");
-        Reservation next = queue.peekNextRequest();
-        if (next != null) {
-            next.displayRequest();
+            if (assignedSet.add(roomId)) {
+                availableCount.decrementAndGet();
+                return String.format("Confirmed: Room %s assigned to %s", roomId, request.getGuestName());
+            }
         }
+        return "Booking Failed: No availability for " + roomType;
+    }
 
-        // NOTE: No inventory mutation or room allocation occurs here.
-        // The queue only collects and orders booking requests.
+    public void addRequest(BookingRequest request) {
+        requestQueue.add(request);
+    }
+
+    // Main method inside the BookMyStayApp class
+    public static void main(String[] args) {
+        BookMyStayApp system = new BookMyStayApp();
+
+        // Add sample requests
+        system.addRequest(new BookingRequest("Alice", "SUITE"));
+        system.addRequest(new BookingRequest("Bob", "DELUXE"));
+        system.addRequest(new BookingRequest("Charlie", "SUITE"));
+
+        System.out.println("--- Hotel Booking System ---");
+
+        // Process requests until empty
+        String result;
+        while (!(result = system.processBooking()).equals("Queue empty.")) {
+            System.out.println(result);
+        }
     }
 }
