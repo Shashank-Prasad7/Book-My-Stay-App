@@ -1,229 +1,127 @@
 import java.util.*;
 
-// ------------------ Custom Exceptions ------------------
-
-class BookingException extends Exception {
-    public BookingException(String message) {
-        super(message);
-    }
-}
-
-class InvalidRoomTypeException extends BookingException {
-    public InvalidRoomTypeException(String message) {
-        super(message);
-    }
-}
-
-class InvalidQuantityException extends BookingException {
-    public InvalidQuantityException(String message) {
-        super(message);
-    }
-}
-
-class InsufficientInventoryException extends BookingException {
-    public InsufficientInventoryException(String message) {
-        super(message);
-    }
-}
-
-class BookingNotFoundException extends BookingException {
-    public BookingNotFoundException(String message) {
-        super(message);
-    }
-}
-
-class AlreadyCancelledException extends BookingException {
-    public AlreadyCancelledException(String message) {
-        super(message);
-    }
-}
-
-// ------------------ Booking Model ------------------
-
-class Booking {
-    String bookingId;
+// ---------------- Booking Request ----------------
+class BookingRequest {
+    String user;
     String roomType;
     int quantity;
-    boolean isCancelled;
 
-    public Booking(String bookingId, String roomType, int quantity) {
-        this.bookingId = bookingId;
+    public BookingRequest(String user, String roomType, int quantity) {
+        this.user = user;
         this.roomType = roomType;
         this.quantity = quantity;
-        this.isCancelled = false;
     }
 }
 
-// ------------------ Booking System ------------------
+// ---------------- Shared System ----------------
+class ConcurrentBookingSystem {
 
-class BookingSystem {
     private Map<String, Integer> inventory = new HashMap<>();
-    private Map<String, Booking> bookings = new HashMap<>();
+    private Queue<BookingRequest> queue = new LinkedList<>();
 
-    // Stack for rollback (LIFO)
-    private Stack<String> rollbackStack = new Stack<>();
-
-    private int bookingCounter = 1;
-
-    public BookingSystem() {
+    public ConcurrentBookingSystem() {
         inventory.put("single", 5);
         inventory.put("double", 3);
         inventory.put("suite", 2);
     }
 
-    // ----------- Validation Methods -----------
-
-    private void validateRoomType(String roomType) throws InvalidRoomTypeException {
-        if (!inventory.containsKey(roomType)) {
-            throw new InvalidRoomTypeException("Invalid room type: " + roomType);
-        }
+    // Add request (thread-safe)
+    public synchronized void addRequest(BookingRequest req) {
+        queue.add(req);
     }
 
-    private void validateQuantity(int quantity) throws InvalidQuantityException {
-        if (quantity <= 0) {
-            throw new InvalidQuantityException("Quantity must be greater than zero.");
-        }
+    // Get request (thread-safe)
+    public synchronized BookingRequest getRequest() {
+        return queue.poll();
     }
 
-    private void checkAvailability(String roomType, int quantity) throws InsufficientInventoryException {
-        if (inventory.get(roomType) < quantity) {
-            throw new InsufficientInventoryException(
-                    "Not enough rooms. Available: " + inventory.get(roomType)
-            );
+    // Critical section
+    public void processBooking(BookingRequest req) {
+        if (req == null) return;
+
+        synchronized (this) {
+            System.out.println(Thread.currentThread().getName() +
+                    " processing " + req.user);
+
+            int available = inventory.getOrDefault(req.roomType, 0);
+
+            try { Thread.sleep(100); } catch (Exception e) {}
+
+            if (available >= req.quantity) {
+                inventory.put(req.roomType, available - req.quantity);
+
+                System.out.println("✅ SUCCESS: " + req.user +
+                        " booked " + req.quantity + " " + req.roomType);
+            } else {
+                System.out.println("❌ FAILED: " + req.user +
+                        " (Not enough " + req.roomType + ")");
+            }
         }
     }
-
-    private Booking validateBookingExists(String bookingId)
-            throws BookingNotFoundException, AlreadyCancelledException {
-
-        if (!bookings.containsKey(bookingId)) {
-            throw new BookingNotFoundException("Booking ID not found: " + bookingId);
-        }
-
-        Booking booking = bookings.get(bookingId);
-
-        if (booking.isCancelled) {
-            throw new AlreadyCancelledException("Booking already cancelled: " + bookingId);
-        }
-
-        return booking;
-    }
-
-    // ----------- Booking -----------
-
-    public String bookRoom(String roomType, int quantity) throws BookingException {
-
-        validateRoomType(roomType);
-        validateQuantity(quantity);
-        checkAvailability(roomType, quantity);
-
-        String bookingId = "B" + bookingCounter++;
-
-        // Reduce inventory
-        inventory.put(roomType, inventory.get(roomType) - quantity);
-
-        // Save booking
-        bookings.put(bookingId, new Booking(bookingId, roomType, quantity));
-
-        return "Booking successful! ID: " + bookingId;
-    }
-
-    // ----------- Cancellation with Rollback -----------
-
-    public String cancelBooking(String bookingId) throws BookingException {
-
-        // Validate booking existence
-        Booking booking = validateBookingExists(bookingId);
-
-        // Step 1: Record rollback info (simulate room IDs)
-        for (int i = 0; i < booking.quantity; i++) {
-            rollbackStack.push(booking.roomType + "_ROOM_RELEASED");
-        }
-
-        // Step 2: Restore inventory immediately
-        inventory.put(booking.roomType,
-                inventory.get(booking.roomType) + booking.quantity);
-
-        // Step 3: Mark booking as cancelled
-        booking.isCancelled = true;
-
-        // Step 4: Update history (implicit via object state)
-
-        return "Cancellation successful for Booking ID: " + bookingId;
-    }
-
-    // ----------- Utility -----------
 
     public void showInventory() {
-        System.out.println("\nInventory:");
-        for (String key : inventory.keySet()) {
-            System.out.println(key + ": " + inventory.get(key));
-        }
-    }
-
-    public void showRollbackStack() {
-        System.out.println("\nRollback Stack (LIFO): " + rollbackStack);
+        System.out.println("\nFinal Inventory: " + inventory);
     }
 }
 
-// ------------------ Main ------------------
+// ---------------- Thread ----------------
+class BookingProcessor extends Thread {
 
-public class BookMyStayApp {
-    public static void main(String[] args) {
-        Scanner scanner = new Scanner(System.in);
-        BookingSystem system = new BookingSystem();
+    private ConcurrentBookingSystem system;
 
+    public BookingProcessor(ConcurrentBookingSystem system, String name) {
+        super(name);
+        this.system = system;
+    }
+
+    public void run() {
         while (true) {
-            system.showInventory();
+            BookingRequest req = system.getRequest();
+            if (req == null) break;
+            system.processBooking(req);
+        }
+    }
+}
 
-            try {
-                System.out.println("\n1. Book Room");
-                System.out.println("2. Cancel Booking");
-                System.out.print("Choose option: ");
-                int choice = Integer.parseInt(scanner.nextLine());
+// ---------------- Main ----------------
+public class BookMyStayApp {
+    public static void main(String[] args) throws Exception {
 
-                if (choice == 1) {
-                    System.out.print("Room type: ");
-                    String roomType = scanner.nextLine().trim().toLowerCase();
+        Scanner sc = new Scanner(System.in);
+        ConcurrentBookingSystem system = new ConcurrentBookingSystem();
 
-                    System.out.print("Quantity: ");
-                    int qty = Integer.parseInt(scanner.nextLine());
+        // -------- USER INPUT --------
+        System.out.print("Enter number of booking requests: ");
+        int n = Integer.parseInt(sc.nextLine());
 
-                    String result = system.bookRoom(roomType, qty);
-                    System.out.println(result);
+        for (int i = 1; i <= n; i++) {
+            System.out.println("\nRequest " + i);
 
-                } else if (choice == 2) {
-                    System.out.print("Enter Booking ID: ");
-                    String bookingId = scanner.nextLine().trim();
+            System.out.print("User name: ");
+            String user = sc.nextLine();
 
-                    String result = system.cancelBooking(bookingId);
-                    System.out.println(result);
+            System.out.print("Room type (single/double/suite): ");
+            String type = sc.nextLine().toLowerCase();
 
-                } else {
-                    System.out.println("Invalid choice.");
-                }
+            System.out.print("Quantity: ");
+            int qty = Integer.parseInt(sc.nextLine());
 
-            } catch (NumberFormatException e) {
-                System.out.println("Invalid input format.");
-
-            } catch (BookingException e) {
-                // Graceful failure handling
-                System.out.println("Operation failed: " + e.getMessage());
-
-            } catch (Exception e) {
-                System.out.println("Unexpected error: " + e.getMessage());
-            }
-
-            system.showRollbackStack();
-
-            System.out.print("\nContinue? (yes/no): ");
-            String cont = scanner.nextLine().trim().toLowerCase();
-            if (!cont.equals("yes")) {
-                System.out.println("Exiting system...");
-                break;
-            }
+            system.addRequest(new BookingRequest(user, type, qty));
         }
 
-        scanner.close();
+        // -------- MULTIPLE THREADS --------
+        BookingProcessor t1 = new BookingProcessor(system, "Thread-1");
+        BookingProcessor t2 = new BookingProcessor(system, "Thread-2");
+        BookingProcessor t3 = new BookingProcessor(system, "Thread-3");
+
+        t1.start();
+        t2.start();
+        t3.start();
+
+        t1.join();
+        t2.join();
+        t3.join();
+
+        system.showInventory();
     }
 }
